@@ -36,7 +36,10 @@ supported_data_types = {
     940: ("float16", 2),
     941: ("bfloat16", 2),
     950: ("float32", 4),
+    955: ("int32", 4),
+    956: ("uint32", 4),
     965: ("int64", 8),
+    966: ("uint64", 8),
 }
 
 def check_supported_data_types() -> None:
@@ -56,7 +59,7 @@ def get_offset_in_number_of_elements(tensor_json: dict) -> int:
 def get_index_from_id(id: int) -> int:
     return id & 0xffffffff
 
-def display_task_graph(task_graph_json_filename: str, use_xdot: bool) -> None:
+def display_task_graph(task_graph_json_filename: str, use_xdot: bool, task_range: tuple[int, int] | None = None) -> None:
     check_supported_data_types()
     task_type_color_map = get_color_map("TASK")
     event_type_color_map = get_color_map("EVENT")
@@ -66,14 +69,35 @@ def display_task_graph(task_graph_json_filename: str, use_xdot: bool) -> None:
         g.attr(rankdir="LR")
         num_events = len(task_graph["all_events"])
         num_tasks = len(task_graph["all_tasks"])
-        missing_events = set()
+
+        if task_range is not None:
+            start, end = task_range
+            task_indices = range(start, min(end, num_tasks))
+        else:
+            task_indices = range(num_tasks)
+
+        # When restricting to a task subrange, only draw the events those
+        # tasks actually touch (plus the base event), not every event in
+        # the graph.
+        included_events = None
+        if task_range is not None:
+            included_events = {base_event}
+            for task_idx in task_indices:
+                task = task_graph["all_tasks"][task_idx]
+                included_events.add(get_index_from_id(task['dependent_event']))
+                included_events.add(get_index_from_id(task['trigger_event']))
+
         for event_idx, event in enumerate(task_graph["all_events"]):
+            if included_events is not None and event_idx not in included_events:
+                continue
             description = f"event_idx: {event_idx}\nevent_type: {event_type_color_map[event['event_type']][1]}\nnum_triggers: {event['num_triggers']}\nfirst_task_id: {event['first_task_id']}\nlast_task_id: {event['last_task_id']}"
             g.attr("node", fillcolor=event_type_color_map[event['event_type']][0], style="filled")
             g.node(f"event_{event_idx}", description)
-        g.node(f"event_{base_event}", "Base Event")
+        if included_events is None or base_event in included_events:
+            g.node(f"event_{base_event}", "Base Event")
         g.attr("node", shape="rectangle")
-        for task_idx, task in enumerate(task_graph["all_tasks"]):
+        for task_idx in task_indices:
+            task = task_graph["all_tasks"][task_idx]
             inputs_len = str(len(task['inputs'])) if task['inputs'] is not None else "None"
             outputs_len = str(len(task['outputs'])) if task['outputs'] is not None else "None"
             if task["inputs"] is not None:
@@ -93,7 +117,10 @@ def display_task_graph(task_graph_json_filename: str, use_xdot: bool) -> None:
             g.edge(f"event_{dependent_event_idx}", f"task_{task_idx}")
             g.edge(f"task_{task_idx}", f"event_{trigger_event_idx}")
 
-        dot_filename = task_graph_json_filename.replace(".json", ".dot")
+        if task_range is not None:
+            dot_filename = task_graph_json_filename.replace(".json", f"_tasks{task_range[0]}-{task_range[1]}.dot")
+        else:
+            dot_filename = task_graph_json_filename.replace(".json", ".dot")
         g.save(dot_filename)
         print(f"Graph's dot representation saved as {dot_filename}")
         # Open with xdot
@@ -106,4 +133,7 @@ def display_task_graph(task_graph_json_filename: str, use_xdot: bool) -> None:
 if __name__ == "__main__":
     # take the argument from the command line
     task_graph_json_filename = sys.argv[1]
-    display_task_graph(task_graph_json_filename, use_xdot=True)
+    task_range = None
+    if len(sys.argv) >= 4:
+        task_range = (int(sys.argv[2]), int(sys.argv[3]))
+    display_task_graph(task_graph_json_filename, use_xdot=True, task_range=task_range)
