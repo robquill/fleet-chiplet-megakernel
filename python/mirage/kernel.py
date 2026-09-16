@@ -541,7 +541,11 @@ class KNGraph:
         # Select compiler based on target platform
         if target_cc == 94:  # ROCm/MI300
             rocm_home = os.environ.get("ROCM_PATH", "/opt/rocm")
-            cc = shutil.which("hipcc") or os.path.join(rocm_home, "bin", "hipcc")
+            rocm_hipcc = os.path.join(rocm_home, "bin", "hipcc")
+            # Prefer the hipcc under rocm_home so it matches the -I/-L paths built
+            # from the same variable; a pip-installed hipcc earlier on PATH links
+            # against its own bundled ROCm SDK regardless of -L flags.
+            cc = rocm_hipcc if os.path.isfile(rocm_hipcc) else shutil.which("hipcc")
             if not cc or not os.path.isfile(cc):
                 raise RuntimeError(
                     "hipcc not found. For MI300/ROCm builds set ROCM_PATH or ensure hipcc is on PATH."

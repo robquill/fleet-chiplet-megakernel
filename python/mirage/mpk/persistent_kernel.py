@@ -2453,7 +2453,11 @@ class PersistentKernel:
 
         if self.target_cc == 94:
             rocm_home = os.environ.get("ROCM_PATH", "/opt/rocm")
-            cc = shutil.which("hipcc") or os.path.join(rocm_home, "bin", "hipcc")
+            rocm_hipcc = os.path.join(rocm_home, "bin", "hipcc")
+            # Prefer the hipcc under rocm_home so it matches the -I/-L paths built
+            # from the same variable; a pip-installed hipcc earlier on PATH links
+            # against its own bundled ROCm SDK regardless of -L flags.
+            cc = rocm_hipcc if os.path.isfile(rocm_hipcc) else shutil.which("hipcc")
             if not cc or not os.path.isfile(cc):
                 raise RuntimeError(
                     "hipcc not found. For MI300/ROCm builds set ROCM_PATH or ensure hipcc is on PATH."
@@ -2572,7 +2576,14 @@ class PersistentKernel:
         )
         print("Compiling megakernel using the following command line:")
         print(cc_cmd)
-        subprocess.check_call(cc_cmd)
+        if int(os.environ.get("MPK_QUIET_BUILD", "0")) == 1:
+            result = subprocess.run(cc_cmd, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, text=True)
+            if result.returncode != 0:
+                print(result.stdout)
+                raise subprocess.CalledProcessError(result.returncode, cc_cmd)
+        else:
+            subprocess.check_call(cc_cmd)
 
         import importlib.util
 
