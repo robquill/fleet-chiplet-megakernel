@@ -22,7 +22,7 @@ def grid_for_rmsnorm_linear_layer(size: int):
         return 96
     elif size % 64 == 0:
         return 64
-    
+
 # Return the largest factor of m that is less than or equal to n
 # This is used to determine the grid size
 def max_factor_leq_n(m: int, n: int) -> int:
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     positions = torch.arange(32768).unsqueeze(0).to(model.device)
     dummy_x_for_device = torch.empty(1, dtype=torch.bfloat16, device=model.device)
     position_embeddings = model.model.rotary_emb(dummy_x_for_device, positions)
-    
+
     # kv_cache tensors
     key_cache_torch = torch.empty(
         (
@@ -213,18 +213,24 @@ if __name__ == "__main__":
 
         hidden_size = model.config.hidden_size
         intermediate_size = model.config.moe_intermediate_size
-        # pad vocab_size to facilitate task graph creation
+        num_workers, num_schedulers = mi.get_configurations_from_gpu(rank)
+        # Pad vocab_size up to a multiple of num_workers: the lm_head LINEAR
+        # task splits the vocab dimension evenly across num_workers tasks, and
+        # a vocab_size that isn't a multiple of num_workers makes the
+        # threadblock graph's dimension-splitting fall back to a gcd-based
+        # tile size that disagrees with the per-task offsets, causing an
+        # out-of-bounds GPU write.
+        vocab_size = -(-model.config.vocab_size // num_workers) * num_workers
         lm_head_weight = torch.cat(
             (
                 model.lm_head.weight,
                 torch.full(
-                    (153600 - model.config.vocab_size, hidden_size), 0, device="cuda"
+                    (vocab_size - model.config.vocab_size, hidden_size), 0, device="cuda"
                 ),
             ),
             0,
         )
         assert lm_head_weight.stride()[0] == hidden_size
-        vocab_size = 153600
         num_q_heads = model.config.num_attention_heads
         num_kv_heads = model.config.num_key_value_heads
         num_local_q_heads = num_q_heads // world_size
@@ -250,7 +256,7 @@ if __name__ == "__main__":
             ).contiguous()
         else:
             profiler_tensor = None
-            
+
         if hasattr(mi, 'spec_decode_class'):
             spec_decode_config = mi.spec_decode_class(
                 args.spec_decode,
@@ -259,8 +265,7 @@ if __name__ == "__main__":
             )
         else:
             spec_decode_config = None
-            
-        num_workers, num_schedulers = mi.get_configurations_from_gpu(rank)
+
         qo_indptr_buffer = torch.empty(
             args.max_num_batched_requests + 1, dtype=torch.int32, device="cuda")
         paged_kv_indptr_buffer = torch.empty(
@@ -299,16 +304,16 @@ if __name__ == "__main__":
             spec_decode_config=spec_decode_config,
             use_cutlass_kernel=args.use_cutlass_kernel
         )
-        
+
         if spec_decode_config and spec_decode_config.method == "promptlookup":
             all_tokens = mpk.attach_input(torch_tensor=tokens, name="all_tokens")
             num_tokens_extend = spec_decode_config.spec_length + 1
         else:
             num_tokens_extend = 1
-        
+
         # TODO: Make the code run well even if 96 % max_num_batched_tokens != 0
         # assert(96 % args.max_num_batched_tokens == 0)
-        
+
         x = mpk.attach_input(torch_tensor=input_tokens, name="input_token")
         cos_pos_embed = mpk.attach_input(
             torch_tensor=position_embeddings[0][0, :4096, :],
@@ -376,7 +381,7 @@ if __name__ == "__main__":
             name="attn_allreduce_out",
             io_category="nvshmem_tensor" if world_size > 1 else "cuda_tensor",
         )
-        # TODO(Zhihao): a temporary solution to combine MoE gate_proj and up_proj into one linear 
+        # TODO(Zhihao): a temporary solution to combine MoE gate_proj and up_proj into one linear
         # layer on the torch side with extra memory requirements, need to have a shuffle kernel to do this properly
         moe_gate_up_proj_torch_weights = []
         moe_down_proj_torch_weights = []
@@ -470,7 +475,7 @@ if __name__ == "__main__":
         # add spec tokens layer
         if spec_decode_config:
             spec_tokens = mpk.draft_forward_layer_dispatcher(
-                spec_decode_config = spec_decode_config, 
+                spec_decode_config = spec_decode_config,
                 tokens = all_tokens,
                 grid_dim=(96, 1, 1),
                 block_dim=(256, 1, 1),
@@ -480,12 +485,12 @@ if __name__ == "__main__":
         w = mpk.attach_input(
             torch_tensor=model.model.embed_tokens.weight, name="embed_tokens"
         )
-        
+
         mpk.embed_layer(
-            input=x, 
-            weight=w, 
-            output=y, 
-            grid_dim=(1, 1, 1), 
+            input=x,
+            weight=w,
+            output=y,
+            grid_dim=(1, 1, 1),
             block_dim=(256, 1, 1),
             input_source=1,
         )
@@ -652,7 +657,7 @@ if __name__ == "__main__":
                 torch_tensor=layer.post_attention_layernorm.weight,
                 name=f"layer_{i}_post_attn_layernorm",
             )
-            
+
             w_moe_gate = mpk.attach_input(
                 torch_tensor=layer.mlp.gate.weight, name=f"layer_{i}_moe_gate"
             )
@@ -662,7 +667,7 @@ if __name__ == "__main__":
             w_down_proj = mpk.attach_input(
                 torch_tensor=layer.mlp.experts["down_proj"], name=f"layer_{i}_down_proj"
             )
-            
+
             rmsnorm_num_tasks = grid_for_rmsnorm_linear_layer(w_gatedup.dim(1))
             mpk.rmsnorm_layer(
                 input=x,
@@ -671,7 +676,7 @@ if __name__ == "__main__":
                 grid_dim=(mpk.max_num_batched_tokens, 1, 1),
                 block_dim=(256, 1, 1),
             )
-            
+
             if args.splitk_gate:
                 # moe gate with split-k
                 mpk.splitk_linear_layer(
@@ -785,8 +790,8 @@ if __name__ == "__main__":
         )
         # add argmax layer
         if spec_decode_config and spec_decode_config.method == "promptlookup":
-            argmax_partial_grid_dim = (max_factor_leq_n(153600, 96 // (spec_decode_config.spec_length + 1)), 
-                                       spec_decode_config.spec_length + 1, 
+            argmax_partial_grid_dim = (max_factor_leq_n(vocab_size, 96 // (spec_decode_config.spec_length + 1)),
+                                       spec_decode_config.spec_length + 1,
                                        1)
             argmax_reduce_grid_dim = (1, spec_decode_config.spec_length + 1, 1)
         else:
@@ -835,7 +840,7 @@ if __name__ == "__main__":
 
         with torch.inference_mode():
             out = model(
-                input_ids=input_ids, 
+                input_ids=input_ids,
                 attention_mask=attention_mask,
                 use_cache=True,
                 past_key_values=None
@@ -843,9 +848,9 @@ if __name__ == "__main__":
             past_key_values = out.past_key_values
             next_token = out.logits[:, -1, :].argmax(dim=-1, keepdim=True)
             print("decode step 1 out", out.logits[:, -1, :5], tokenizer.batch_decode(next_token[0], skip_special_tokens=True)[0])
-        
+
         exit(0)
-        
+
         prompt_len= prompt_lengths[0].item()
         for cur_pos in range(prompt_len, prompt_len + output_len):
             step.fill_(cur_pos - 1)
@@ -894,7 +899,7 @@ if __name__ == "__main__":
             generated_ids = tokens[r, : step[r] + 1]
             response = tokenizer.decode(generated_ids, skip_special_tokens=True)
             print(response)
-        
+
         if total_num_requests > 1:
             print(f"Output length of each batch is same: {(step.max() == step.min()).item()}")
 
