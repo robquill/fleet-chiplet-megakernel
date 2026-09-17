@@ -162,6 +162,13 @@ __device__ __forceinline__ void
           a_base = d_input + w2_tok * (NUM_TOPK * REDUCTION_SIZE)
                    + w2_topk_slot * REDUCTION_SIZE;
           a_row_stride = REDUCTION_SIZE;
+#ifdef MPK_TRACE_VALUES
+          if (n_tile_idx == 0 && route_val != 0 && threadIdx.x == 0) {
+            printf("[TRACE_W2_INPUT] expert_id=%d w2_topk_slot=%d a0=%f a1=%f\n",
+                   (int)expert_id, w2_topk_slot,
+                   (float)a_base[0], (float)a_base[1]);
+          }
+#endif
         }
 
         // Weight B pointer for this N-tile
@@ -256,6 +263,14 @@ __device__ __forceinline__ void
 
           if (global_m < BATCH_SIZE) {
             int const route_val = expert_routing[global_m];
+#ifdef MPK_TRACE_VALUES
+            if constexpr (!W13_LINEAR) {
+              if (n_iter == 0) {
+                printf("[TRACE_W2_ROUTE] expert_id=%d ae_idx=%d w2_tok=%d global_m=%d route_val=%d\n",
+                       (int)expert_id, (int)ae_idx, (int)w2_tok, (int)global_m, route_val);
+              }
+            }
+#endif
             if (route_val != 0) {
               int const topk_slot = route_val - 1;
 
@@ -271,6 +286,24 @@ __device__ __forceinline__ void
                 out[1] = type_convert<bf16>(c_buf[1]);
                 out[2] = type_convert<bf16>(c_buf[2]);
                 out[3] = type_convert<bf16>(c_buf[3]);
+#ifdef MPK_TRACE_VALUES
+                if constexpr (!W13_LINEAR) {
+                  if (n_iter == 0 && global_n_base < 4) {
+                    printf("[TRACE_W2_WRITE] expert_id=%d topk_slot=%d off=%lld "
+                           "n_base=%d c0=%f c1=%f\n",
+                           (int)expert_id, topk_slot,
+                           (long long)(out_addr - d_output),
+                           (int)global_n_base, (float)c_buf[0], (float)c_buf[1]);
+                  }
+                } else {
+                  if (n_iter == 0 && global_n_base < 4) {
+                    printf("[TRACE_W13_WRITE] expert_id=%d topk_slot=%d addr=%p "
+                           "n_base=%d c0=%f c1=%f\n",
+                           (int)expert_id, topk_slot, (void*)out_addr,
+                           (int)global_n_base, (float)c_buf[0], (float)c_buf[1]);
+                  }
+                }
+#endif
                 *reinterpret_cast<uint64_t *>(out_addr) = out_packed;
               } else {
                 #pragma unroll

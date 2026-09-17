@@ -56,6 +56,15 @@ __device__ __forceinline__ void silu_mul_task_impl(void const *input_ptr,
   const bf16* __restrict__ d_mul = static_cast<const bf16*>(input_ptr) + OUTPUT_SIZE;
   bf16* __restrict__ d_output = static_cast<bf16*>(output_ptr);
 
+#ifdef MPK_TRACE_VALUES
+  if (threadIdx.x == 0) {
+    printf("[TRACE_SILU_IN] input_ptr=%p output_ptr=%p in0=%f mul0=%f\n",
+           input_ptr, output_ptr,
+           (float)__bfloat162float(d_input[0]),
+           (float)__bfloat162float(d_mul[0]));
+  }
+#endif
+
   // Specialized path for batch_size=1 (common case in decode)
   if constexpr (BATCH_SIZE == 1) {
     constexpr int VEC_SIZE = 8;

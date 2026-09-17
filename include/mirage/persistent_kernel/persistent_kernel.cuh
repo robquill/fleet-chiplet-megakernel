@@ -1123,6 +1123,44 @@ __device__ __forceinline__ void execute_worker(RuntimeConfig config,
     }
     __syncthreads();
 
+#ifdef MPK_TRACE_VALUES
+    if (threadIdx.x == 0) {
+      size_t _trace_iter = get_task_iteration_num(task_ids[queue_pos]);
+      size_t _trace_pos = get_task_position_index(task_ids[queue_pos]);
+      bool _trace_type_ok = task_desc->task_type == TASK_EMBEDDING ||
+                            task_desc->task_type == TASK_RMS_NORM ||
+                            task_desc->task_type == TASK_LINEAR_WITH_RESIDUAL ||
+                            task_desc->task_type == TASK_PAGED_ATTENTION_1 ||
+                            task_desc->task_type == TASK_PAGED_ATTENTION_2 ||
+                            task_desc->task_type == TASK_MOE_MUL_SUM_ADD_MI300 ||
+                            task_desc->task_type == TASK_MOE_W13_LINEAR_MI300 ||
+                            task_desc->task_type == TASK_MOE_W2_LINEAR_MI300 ||
+                            task_desc->task_type == TASK_MOE_TOPK_SOFTMAX_MI300;
+      if (_trace_iter <= MPK_TRACE_VALUES_MAX_ITER && _trace_type_ok &&
+          task_desc->output_ptrs[0] != nullptr) {
+        float _trace_sum = 0.f;
+        if (task_desc->task_type == TASK_MOE_TOPK_SOFTMAX_MI300) {
+          float const *_trace_out_f =
+              reinterpret_cast<float const *>(task_desc->output_ptrs[0]);
+          for (int _trace_i = 0; _trace_i < 8; _trace_i++) {
+            _trace_sum += _trace_out_f[_trace_i];
+          }
+        } else {
+          bfloat16 const *_trace_out =
+              reinterpret_cast<bfloat16 const *>(task_desc->output_ptrs[0]);
+          for (int _trace_i = 0; _trace_i < 8; _trace_i++) {
+            _trace_sum += (float)_trace_out[_trace_i];
+          }
+        }
+        printf("[TRACE_VALUE] iter=%llu pos=%llu type=%d sum8=%f\n",
+               (unsigned long long)_trace_iter,
+               (unsigned long long)_trace_pos,
+               (int)task_desc->task_type,
+               _trace_sum);
+      }
+    }
+#endif
+
 #ifdef MPK_ENABLE_DEVICE_TASK_ACCUM
     if (threadIdx.x == 0 && g_daccum_active
         && task_desc->task_type != TASK_BEGIN_TASK_GRAPH) {

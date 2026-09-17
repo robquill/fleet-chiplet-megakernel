@@ -47,6 +47,12 @@ __device__ __forceinline__ void
         T val = d_input[row_idx * OUTPUT_STRIDE * NUM_TOPK +
                         topk_idx * OUTPUT_STRIDE + i];
         float weight = d_weight[row_idx * NUM_TOPK + topk_idx];
+#ifdef MPK_TRACE_VALUES
+        if (i == 0) {
+          printf("[TRACE_MSA] row=%d i=0 topk_idx=%d val=%f weight=%f res=%f\n",
+                 row_idx, topk_idx, (float)val, weight, (float)res_val);
+        }
+#endif
         sum_val += static_cast<float>(val) * weight;
       }
       d_output[row_idx * OUTPUT_STRIDE + i] = static_cast<T>(sum_val);

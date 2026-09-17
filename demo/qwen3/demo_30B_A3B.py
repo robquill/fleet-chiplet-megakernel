@@ -90,6 +90,7 @@ if __name__ == "__main__":
     parser.add_argument("--splitk-gate", action="store_true", help="Use split-k gating linear")
     parser.add_argument("--max-new-tokens", type=int, default=None, help="Max decode tokens (default: fill max-seq-length)")
     parser.add_argument("--prompt", type=str, default=None, help="Override default prompt")
+    parser.add_argument("--num-layers", type=int, default=None, help="Number of decoder layers to include (default: all)")
     args = parser.parse_args()
     try:
         from mpi4py import MPI
@@ -495,7 +496,7 @@ if __name__ == "__main__":
             input_source=1,
         )
         x = y
-        num_layers = model.config.num_hidden_layers
+        num_layers = args.num_layers if args.num_layers is not None else model.config.num_hidden_layers
         for i, layer in enumerate(model.model.layers[:num_layers]):
             # add rmsnorm + linear
             w_norm = mpk.attach_input(
@@ -899,6 +900,7 @@ if __name__ == "__main__":
             generated_ids = tokens[r, : step[r] + 1]
             response = tokenizer.decode(generated_ids, skip_special_tokens=True)
             print(response)
+            print("new_token_ids:", generated_ids[prompt_lengths[r].item():].tolist())
 
         if total_num_requests > 1:
             print(f"Output length of each batch is same: {(step.max() == step.min()).item()}")

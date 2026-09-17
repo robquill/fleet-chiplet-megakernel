@@ -344,6 +344,9 @@ def get_compile_command(
             flags = flags + ["-DMPK_NT_WEIGHT_LOADS"]
         if int(os.environ.get("TRACE_MOE", "0")) == 1:
             flags = flags + ["-DMPK_TRACE_MOE_DISPATCH"]
+        if int(os.environ.get("TRACE_VALUES", "0")) == 1:
+            max_iter = os.environ.get("TRACE_VALUES_MAX_ITER", "5")
+            flags = flags + ["-DMPK_TRACE_VALUES", f"-DMPK_TRACE_VALUES_MAX_ITER={max_iter}"]
         if int(os.environ.get("CK_FMHA_1TOK", "0")) == 1:
             # Force seqlen_q=1: uses merge path only (faster decode, slower prefill)
             flags = flags + ["-DMPK_MAX_TOKENS_PER_REQUEST=1"]
